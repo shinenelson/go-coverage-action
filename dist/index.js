@@ -10695,6 +10695,14 @@ module.exports = require("punycode");
 
 /***/ }),
 
+/***/ 4521:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("readline");
+
+/***/ }),
+
 /***/ 2781:
 /***/ ((module) => {
 
@@ -12089,7 +12097,7 @@ module.exports = JSON.parse('[[[0,44],"disallowed_STD3_valid"],[[45,46],"valid"]
 /***/ ((module) => {
 
 "use strict";
-module.exports = JSON.parse('{"name":"go-coverage-action","version":"1.0.0","description":"Coverage reports for the Go programming language","main":"index.js","scripts":{"lint":"eslint .","prepare":"ncc build index.js -o dist --source-map --license licenses.txt","all":"npm run lint && npm run prepare"},"repository":{"type":"git","url":"git+https://github.com/gwatts/go-coverage-action.git"},"keywords":["GitHub","Actions","Golang","Go","Testing","Coverage"],"author":"gwatts","license":"MIT","bugs":{"url":"https://github.com/gwatts/go-coverage-action/issues"},"homepage":"https://github.com/gwatts/go-coverage-action#readme","dependencies":{"@actions/core":"^1.10.0","@actions/github":"^5.1.1","execa":"^6.1.0"},"devDependencies":{"@vercel/ncc":"^0.34.0","eslint":"^8.26.0"},"volta":{"node":"16.14.0"}}');
+module.exports = JSON.parse('{"name":"go-coverage-action","version":"1.0.0","description":"Coverage reports for the Go programming language","main":"index.js","scripts":{"lint":"eslint .","prepare":"ncc build index.js -o dist --source-map --license licenses.txt","all":"npm run lint && npm run prepare"},"repository":{"type":"git","url":"git+https://github.com/gwatts/go-coverage-action.git"},"keywords":["GitHub","Actions","Golang","Go","Testing","Coverage"],"author":"gwatts","license":"MIT","bugs":{"url":"https://github.com/gwatts/go-coverage-action/issues"},"homepage":"https://github.com/gwatts/go-coverage-action#readme","dependencies":{"@actions/core":"^1.10.0","@actions/github":"^5.1.1","execa":"^6.1.0"},"devDependencies":{"@vercel/ncc":"^0.34.0","eslint":"^8.28.0"},"volta":{"node":"16.14.0"}}');
 
 /***/ })
 
@@ -12164,8 +12172,13 @@ var __webpack_exports__ = {};
 (() => {
 const core = __nccwpck_require__(2186);
 const github = __nccwpck_require__(5438);
+
+const events = __nccwpck_require__(2361);
 const {execa} = __nccwpck_require__(276);
+const fs = __nccwpck_require__(7147);
 const path = __nccwpck_require__(1017);
+const readline = __nccwpck_require__(4521);
+
 const {version} = __nccwpck_require__(4147);
 
 
@@ -12225,6 +12238,7 @@ async function fetchCoverage() {
 
 async function setCoverageNote(data) {
   const jsdata = JSON.stringify(data);
+  core.info(`new coverage:  ${jsdata}`);
   await fetchCoverage();
   await exec('git', ['notes',
     '--ref=gocoverage',
@@ -12249,6 +12263,7 @@ async function getPriorCoverage() {
         '--grep=coverage_pct', '-n', '1', ref]);
 
     try {
+      core.info(`prior coverage:  ${output}`);
       const lines = output.split('\n');
       const sha = lines[0];
       const data = JSON.parse(lines[1]);
@@ -12315,9 +12330,23 @@ async function generateCoverage() {
     ...(coverPkg ? ['-coverpkg', coverPkg] : []),
     './...'
   ]);
-  const {output: testOutput} = await exec('go', args);
+  //const {output: testOutput} = await exec('go', args);
+  await exec('go', args);
 
   const pkgStats = {};
+  const [globalPct, pkgStmts] = await calcCoverage(report.gocovPathname);
+  for (const [pkgPath, [stmtCount, matchCount]] of Object.entries(pkgStmts)) {
+    report.pkg_count++;
+    pkgStats[pkgPath] = [matchCount / stmtCount * 100];
+    if (matchCount > 0) {
+      report.with_tests++;
+    } else {
+      report.no_tests++;
+    }
+  }
+  report.coverage_pct = globalPct;
+
+  /*
   for (const m of testOutput.matchAll(/^(\?|ok)\s+([^\t]+)(.+coverage: ([\d.]+)%)?/gm)) {
     report.pkg_count++;
 
@@ -12328,44 +12357,96 @@ async function generateCoverage() {
       report.no_tests++;
       pkgStats[m[2]] = [0];
     }
-  }
+}
+    */
 
 
   await exec('go', ['tool', 'cover', '-html', report.gocovPathname, '-o', report.reportPathname]);
   core.info(`Generated ${report.reportPathname}`);
 
-  const {output: coverOutput} = await exec('go', ['tool', 'cover', '-func', report.gocovPathname]);
-  const m = coverOutput.match(/^total:.+\s([\d.]+)%/m);
-  if (!m) {
-    throw ('Failed to parse output of go tool cover');
-  }
-
-  report.coverage_pct = Number(m[1]);
+  /*
+    const {output: coverOutput} = await exec('go', ['tool', 'cover', '-func', report.gocovPathname]);
+    const m = coverOutput.match(/^total:.+\s([\d.]+)%/m);
+    if (!m) {
+      throw ('Failed to parse output of go tool cover');
+    }
+  
+    report.coverage_pct = Number(m[1]);
+    */
   report.pkg_stats = pkgStats;
 
   return report;
+}
+
+// parse the go.cov file to calculate "true" coverage figures per package
+// regardless of whether coverpkg is used.
+async function calcCoverage(goCovFilename) {
+  const pkgStats = {};
+  const seenIds = {};
+  let globalStmts = 0;
+  let globalCount = 0;
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(goCovFilename),
+    crlfDelay: Infinity
+  });
+
+  const re = /^(.+) (\d+) (\d+)$/;
+  rl.on('line', (line) => {
+    const m = line.match(re);
+    if (!m) return;
+    const id = m[1];
+    const stmtCount = Number(m[2]);
+    const matchCount = Number(m[3]);
+    const pkgPath = path.dirname(id);
+    if (!pkgStats[pkgPath]) {
+      pkgStats[pkgPath] = [0, 0]; // stmts, covered
+    }
+    if (!seenIds[id]) {
+      globalStmts += stmtCount;
+      seenIds[id] = [stmtCount, false];
+      pkgStats[pkgPath][0] += stmtCount;
+    }
+    if (matchCount > 0 && !seenIds[id][1]) {
+      globalCount += stmtCount;
+      seenIds[id][1] = true;
+      pkgStats[pkgPath][1] += stmtCount;
+      core.info(`pkg stmts path=${pkgPath}, stmtCount=${stmtCount}`);
+    }
+  });
+
+  await events.once(rl, 'close');
+  const globalPct = globalCount / globalStmts * 100;
+  core.info(`global stmts=${globalStmts} count=${globalCount}, pct=${globalPct}`);
+  return [globalPct, pkgStats];
 }
 
 
 const commentMarker = '<!-- gocovaction -->';
 
 async function generatePRComment(stats) {
-  let commitComment = `${commentMarker}Go test coverage: ${stats.current.coverage_pct}% for commit ${ctx.sha}`;
+  let commitComment = `${commentMarker}Go test coverage: ${stats.current.coverage_pct.toFixed(1)}% for commit ${ctx.sha}`;
 
   if (stats.prior.coverage_pct != null) {
     core.info(`Previous coverage: ${stats.prior.coverage_pct}% as of ${stats.prior.sha}`);
 
-    commitComment = `${commentMarker}:arrow_right: Go test coverage stayed the same at ${stats.current.coverage_pct}% compared to ${stats.prior.sha}`;
+    commitComment = `${commentMarker}:arrow_right: Go test coverage stayed the same at ${stats.current.coverage_pct.toFixed(1)}% compared to ${stats.prior.sha}`;
     if (stats.deltaPct > 0) {
-      commitComment = `${commentMarker}:arrow_up: Go test coverage increased from ${stats.prior.coverage_pct}% to ${stats.current.coverage_pct}% compared to ${stats.prior.sha}`;
+      commitComment = `${commentMarker}:arrow_up: Go test coverage increased from ${stats.prior.coverage_pct.toFixed(1)}% to ${stats.current.coverage_pct.toFixed(1)}% compared to ${stats.prior.sha}`;
     } else if (stats.deltaPct < 0) {
-      commitComment = `${commentMarker}:arrow_down: Go test coverage decreased from ${stats.prior.coverage_pct}% to ${stats.current.coverage_pct}% compared to ${stats.prior.sha}`;
+      commitComment = `${commentMarker}:arrow_down: Go test coverage decreased from ${stats.prior.coverage_pct.toFixed(1)}% to ${stats.current.coverage_pct.toFixed(1)}% compared to ${stats.prior.sha}`;
     }
   } else {
     core.info('No prior coverage information found in log');
   }
   if (stats.current.no_tests > 0) {
-    commitComment += `\n:warning: ${stats.current.no_tests} of ${stats.current.pkg_count} packages have zero coverage.`
+    commitComment += `\n<details><summary>:warning: ${stats.current.no_tests} of ${stats.current.pkg_count} packages have zero coverage.</summary>\n`;
+    for (const pkgName of Object.keys(stats.current.pkg_stats).sort()) {
+      if (stats.current.pkg_stats[pkgName] == 0) {
+        commitComment += `* ${pkgName}\n`;
+      }
+    }
+    commitComment += `</details>\n`;
   }
 
   if (!stats.meetsThreshold) {

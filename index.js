@@ -1,7 +1,12 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
+
+const events = require('events');
 const {execa} = require('execa');
+const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
+
 const {version} = require('./package.json');
 
 
@@ -61,6 +66,9 @@ async function fetchCoverage() {
 
 async function setCoverageNote(data) {
   const jsdata = JSON.stringify(data);
+  core.startGroup('new coverage raw data');
+  core.info(`new coverage data:  ${jsdata}`);
+  core.endGroup();
   await fetchCoverage();
   await exec('git', ['notes',
     '--ref=gocoverage',
@@ -85,6 +93,9 @@ async function getPriorCoverage() {
         '--grep=coverage_pct', '-n', '1', ref]);
 
     try {
+      core.startGroup('prior coverage raw data');
+      core.info(`prior coverage data:  ${output}`);
+      core.endGroup();
       const lines = output.split('\n');
       const sha = lines[0];
       const data = JSON.parse(lines[1]);
@@ -151,57 +162,97 @@ async function generateCoverage() {
     ...(coverPkg ? ['-coverpkg', coverPkg] : []),
     './...'
   ]);
-  const {output: testOutput} = await exec('go', args);
+  //const {output: testOutput} = await exec('go', args);
+  await exec('go', args);
 
   const pkgStats = {};
-  for (const m of testOutput.matchAll(/^(\?|ok)\s+([^\t]+)(.+coverage: ([\d.]+)%)?/gm)) {
+  const [globalPct, pkgStmts] = await calcCoverage(report.gocovPathname);
+  for (const [pkgPath, [stmtCount, matchCount]] of Object.entries(pkgStmts)) {
     report.pkg_count++;
-
-    if (m[1] == 'ok') {
+    pkgStats[pkgPath] = [matchCount / stmtCount * 100];
+    if (matchCount > 0) {
       report.with_tests++;
-      pkgStats[m[2]] = [Number(m[4])];  // an array so additional fields can easily be added later
     } else {
       report.no_tests++;
-      pkgStats[m[2]] = [0];
     }
   }
-
+  report.coverage_pct = globalPct;
+  report.pkg_stats = pkgStats;
 
   await exec('go', ['tool', 'cover', '-html', report.gocovPathname, '-o', report.reportPathname]);
   core.info(`Generated ${report.reportPathname}`);
 
-  const {output: coverOutput} = await exec('go', ['tool', 'cover', '-func', report.gocovPathname]);
-  const m = coverOutput.match(/^total:.+\s([\d.]+)%/m);
-  if (!m) {
-    throw ('Failed to parse output of go tool cover');
-  }
-
-  report.coverage_pct = Number(m[1]);
-  report.pkg_stats = pkgStats;
-
   return report;
+}
+
+// parse the go.cov file to calculate "true" coverage figures per package
+// regardless of whether coverpkg is used.
+async function calcCoverage(goCovFilename) {
+  const pkgStats = {};
+  const seenIds = {};
+  let globalStmts = 0;
+  let globalCount = 0;
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(goCovFilename),
+    crlfDelay: Infinity
+  });
+
+  const re = /^(.+) (\d+) (\d+)$/;
+  rl.on('line', (line) => {
+    const m = line.match(re);
+    if (!m) return;
+    const id = m[1]; // statement identifier; pkgpath + stmt offset
+    const pkgPath = path.dirname(id);
+    const stmtCount = Number(m[2]);
+    const matchCount = Number(m[3]);
+    if (!pkgStats[pkgPath]) {
+      pkgStats[pkgPath] = [0, 0]; // stmts, covered
+    }
+    if (!seenIds[id]) {
+      globalStmts += stmtCount;
+      seenIds[id] = [stmtCount, false];
+      pkgStats[pkgPath][0] += stmtCount;
+    }
+    if (matchCount > 0 && !seenIds[id][1]) {
+      globalCount += stmtCount;
+      seenIds[id][1] = true;
+      pkgStats[pkgPath][1] += stmtCount;
+    }
+  });
+
+  await events.once(rl, 'close');
+  const globalPct = globalCount / globalStmts * 100;
+  core.info(`Totals stmts=${globalStmts} covered=${globalCount}, pct=${globalPct}`);
+  return [globalPct, pkgStats];
 }
 
 
 const commentMarker = '<!-- gocovaction -->';
 
 async function generatePRComment(stats) {
-  let commitComment = `${commentMarker}Go test coverage: ${stats.current.coverage_pct}% for commit ${ctx.sha}`;
+  let commitComment = `${commentMarker}Go test coverage: ${stats.current.coverage_pct.toFixed(1)}% for commit ${ctx.sha}`;
 
   if (stats.prior.coverage_pct != null) {
     core.info(`Previous coverage: ${stats.prior.coverage_pct}% as of ${stats.prior.sha}`);
 
-    commitComment = `${commentMarker}:arrow_right: Go test coverage stayed the same at ${stats.current.coverage_pct}% compared to ${stats.prior.sha}`;
+    commitComment = `${commentMarker}:arrow_right: Go test coverage stayed the same at ${stats.current.coverage_pct.toFixed(1)}% compared to ${stats.prior.sha}`;
     if (stats.deltaPct > 0) {
-      commitComment = `${commentMarker}:arrow_up: Go test coverage increased from ${stats.prior.coverage_pct}% to ${stats.current.coverage_pct}% compared to ${stats.prior.sha}`;
+      commitComment = `${commentMarker}:arrow_up: Go test coverage increased from ${stats.prior.coverage_pct.toFixed(1)}% to ${stats.current.coverage_pct.toFixed(1)}% compared to ${stats.prior.sha}`;
     } else if (stats.deltaPct < 0) {
-      commitComment = `${commentMarker}:arrow_down: Go test coverage decreased from ${stats.prior.coverage_pct}% to ${stats.current.coverage_pct}% compared to ${stats.prior.sha}`;
+      commitComment = `${commentMarker}:arrow_down: Go test coverage decreased from ${stats.prior.coverage_pct.toFixed(1)}% to ${stats.current.coverage_pct.toFixed(1)}% compared to ${stats.prior.sha}`;
     }
   } else {
     core.info('No prior coverage information found in log');
   }
   if (stats.current.no_tests > 0) {
-    commitComment += `\n:warning: ${stats.current.no_tests} of ${stats.current.pkg_count} packages have zero coverage.`
+    commitComment += `\n<details><summary>:warning: ${stats.current.no_tests} of ${stats.current.pkg_count} packages have zero coverage.</summary>\n`;
+    for (const pkgName of Object.keys(stats.current.pkg_stats).sort()) {
+      if (stats.current.pkg_stats[pkgName] == 0) {
+        commitComment += `* ${pkgName}\n`;
+      }
+    }
+    commitComment += `</details>\n`;
   }
 
   if (!stats.meetsThreshold) {

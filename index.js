@@ -307,9 +307,9 @@ async function generatePRComment(stats) {
   commitComment += '\n```diff\n'
   commitComment += `# ${'Package Name'.padEnd(allMaxPkgLen, ' ')} | Coverage\n`;
   for (const pkgName of Object.keys(stats.current.pkg_stats).sort()) {
-    commitComment += `${pkgName.padEnd(allMaxPkgLen, ' ')} | ${stats.current.pkg_stats[pkgName][0].toFixed(1)}%\n`;
+    commitComment += `+ ${pkgName.padEnd(allMaxPkgLen, ' ')} | ${stats.current.pkg_stats[pkgName][0].toFixed(1)}%\n`;
   }
-  commitComment += '</details>\n';
+  commitComment += '```\n</details>\n\n';
 
   return commitComment;
 

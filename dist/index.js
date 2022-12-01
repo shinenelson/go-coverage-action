@@ -15646,7 +15646,7 @@ async function generatePRComment(stats) {
     if (delta.length) {
       const maxPkgLen = Math.max.apply(null, delta.map(pkg => pkg[0].length));
       commitComment += '\nUpdated Package Coverages:\n\n```diff\n';
-      commitComment += `# ${'Package Name'.padEnd(maxPkgLen, ' ')} | Prior  | New\n`;
+      commitComment += `# ${'Package Name'.padEnd(maxPkgLen, ' ')} |  Prior |   New\n`;
       for (const pkg of delta) {
         const [pkgName, priorPct, newPct] = pkg;
         const priorPctFmt = priorPct.toFixed(1).padStart(5, ' ') + '%';
@@ -15665,7 +15665,7 @@ async function generatePRComment(stats) {
   commitComment += `# ${'Package Name'.padEnd(allMaxPkgLen, ' ')} | Coverage\n`;
   for (const pkgName of Object.keys(stats.current.pkg_stats).sort()) {
     const pct = stats.current.pkg_stats[pkgName][0];
-    commitComment += `${pct > 0 ? '+' : '-'} ${pkgName.padEnd(allMaxPkgLen, ' ')} | ${pct.toFixed(1).padStart(5, ' ')}%\n`;
+    commitComment += `${pct > 0 ? '+' : '-'} ${pkgName.padEnd(allMaxPkgLen, ' ')} |   ${pct.toFixed(1).padStart(5, ' ')}%\n`;
   }
   commitComment += '```\n</details>\n\n';
 

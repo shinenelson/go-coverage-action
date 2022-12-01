@@ -15646,7 +15646,7 @@ async function generatePRComment(stats) {
     if (delta.length) {
       const maxPkgLen = Math.max.apply(null, delta.map(pkg => pkg[0].length));
       commitComment += '\nUpdated Package Coverages:\n\n```diff\n';
-      commitComment += `# ${'Package Name'.padEnd(maxPkgLen, ' ')} |  Prior |   New\n`;
+      commitComment += `# ${'Package Name'.padEnd(maxPkgLen, ' ')} |  Prior |    New\n`;
       for (const pkg of delta) {
         const [pkgName, priorPct, newPct] = pkg;
         const priorPctFmt = priorPct.toFixed(1).padStart(5, ' ') + '%';

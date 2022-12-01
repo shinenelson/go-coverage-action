@@ -302,6 +302,15 @@ async function generatePRComment(stats) {
     }
   }
 
+  const allMaxPkgLen = Math.max.apply(null, Object.keys(stats.current.pkg_stats).map(pkgName => pkgName.length));
+  commitComment += '<details><summary>View coverage for all packages</summary>\n';
+  commitComment += '\n```diff\n'
+  commitComment += `# ${'Package Name'.padEnd(allMaxPkgLen, ' ')} | Coverage\n`;
+  for (const pkgName of Object.keys(stats.current.pkg_stats).sort()) {
+    commitComment += `${pkgName.padEnv(allMaxPkgLen, ' ')} | ${stats.current.pkg_stats[pkgName].toFixed(1)}%\n`;
+  }
+  commitComment += '</details>\n';
+
   return commitComment;
 
 }

@@ -15552,11 +15552,8 @@ async function calcCoverage(goCovFilename) {
   let globalCount = 0;
   let skippedFiles = new Set();
 
-  //const ignorePatterns = core.getMultilineInput('ignore-pattern');
   const ignorePatterns = core.getMultilineInput('ignore-pattern').map(pat => new RegExp(pat.trim()));
-  //const ignoreRe = ignorePattern && new RegExp(ignorePattern);
   core.info(`Ignoring ${ignorePatterns.length} filename patterns`);
-  //core.info(`ignorePatterns="${ignorePatterns}"  ignoreRe=${ignoreRe}`);
 
   const rl = readline.createInterface({
     input: fs.createReadStream(goCovFilename),
@@ -15571,7 +15568,6 @@ async function calcCoverage(goCovFilename) {
     const pkgPath = path.dirname(id);
     const fn = id.split(':')[0];
     for (const re of ignorePatterns) {
-      //if (ignoreRe && fn.match(ignoreRe)) {
       if (fn.match(re)) {
         if (!skippedFiles.has(fn)) {
           core.info('Skipping ' + fn);
@@ -15661,6 +15657,15 @@ async function generatePRComment(stats) {
       commitComment += `\nNo change in coverage for any package.\n\n`;
     }
   }
+
+  const allMaxPkgLen = Math.max.apply(null, Object.keys(stats.current.pkg_stats).map(pkgName => pkgName.length));
+  commitComment += '<details><summary>View coverage for all packages</summary>\n';
+  commitComment += '\n```diff\n'
+  commitComment += `# ${'Package Name'.padEnd(allMaxPkgLen, ' ')} | Coverage\n`;
+  for (const pkgName of Object.keys(stats.current.pkg_stats).sort()) {
+    commitComment += `${pkgName.padEnv(allMaxPkgLen, ' ')} | ${stats.current.pkg_stats[pkgName].toFixed(1)}%\n`;
+  }
+  commitComment += '</details>\n';
 
   return commitComment;
 

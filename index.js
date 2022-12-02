@@ -247,7 +247,8 @@ async function calcCoverage(goCovFilename, filteredFilename) {
 
   for (const id of Object.keys(seenIds).sort()) {
     const [stmtCount, isCovered] = seenIds[id];
-    wl.write(`{$id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
+    core.info(`Write: ${id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
+    wl.write(`${id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
   }
   wl.end()
 

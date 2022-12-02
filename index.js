@@ -249,7 +249,7 @@ async function calcCoverage(goCovFilename, filteredFilename) {
     const [stmtCount, isCovered] = seenIds[id];
     wl.write(`{$id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
   }
-  wl.close()
+  wl.end()
 
   await events.once(rl, 'close');
   const globalPct = globalCount / globalStmts * 100;

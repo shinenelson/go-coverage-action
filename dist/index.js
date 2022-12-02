@@ -15493,9 +15493,11 @@ async function generateCoverage() {
     'coverage_pct': 0,
     'reportPathname': '',
     'gocovPathname': '',
+    'gocovFilteredPathname': '',
   };
 
   report.gocovPathname = path.join(tmpdir, 'go.cov');
+  report.gocovFilteredPathname = path.join(tmpdir, 'go-filtered.cov');
 
   const filename = core.getInput('report-filename');
   report.reportPathname = filename.startsWith('/') ? filename : path.join(tmpdir, filename);
@@ -15524,7 +15526,7 @@ async function generateCoverage() {
   await exec('go', args);
 
   const pkgStats = {};
-  const [globalPct, skippedFileCount, pkgStmts] = await calcCoverage(report.gocovPathname);
+  const [globalPct, skippedFileCount, pkgStmts] = await calcCoverage(report.gocovPathname, report.gocovFilteredPathname);
   for (const [pkgPath, [stmtCount, matchCount]] of Object.entries(pkgStmts)) {
     report.pkg_count++;
     pkgStats[pkgPath] = [matchCount / stmtCount * 100];
@@ -15546,7 +15548,7 @@ async function generateCoverage() {
 
 // parse the go.cov file to calculate "true" coverage figures per package
 // regardless of whether coverpkg is used.
-async function calcCoverage(goCovFilename) {
+async function calcCoverage(goCovFilename, filteredFilename) {
   const pkgStats = {};
   const seenIds = {};
   let globalStmts = 0;
@@ -15556,10 +15558,15 @@ async function calcCoverage(goCovFilename) {
   const ignorePatterns = core.getMultilineInput('ignore-pattern').map(pat => new RegExp(pat.trim()));
   core.info(`Ignoring ${ignorePatterns.length} filename patterns`);
 
+  const wl = fs.createWriteStream(filteredFilename);
+  wl.write('mode: set\n');
+
   const rl = readline.createInterface({
     input: fs.createReadStream(goCovFilename),
     crlfDelay: Infinity
   });
+
+  // TODO: write an entry to wl for each id; write if set, write zeroes if not set at end
 
   const re = /^(.+) (\d+) (\d+)$/;
   rl.on('line', (line) => {
@@ -15593,6 +15600,12 @@ async function calcCoverage(goCovFilename) {
       pkgStats[pkgPath][1] += stmtCount;
     }
   });
+
+  for (const id of Object.keys(seenIds).sort()) {
+    const [stmtCount, isCovered] = seenIds[id];
+    wl.write(`{$id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
+  }
+  wl.close()
 
   await events.once(rl, 'close');
   const globalPct = globalCount / globalStmts * 100;
@@ -15727,6 +15740,7 @@ async function generateReport() {
   core.setOutput('coverage-last-sha', stats.prior.sha);
   core.setOutput('meets-threshold', stats.meetsThreshold);
   core.setOutput('gocov-pathname', current.gocovPathname);
+  core.setOutput('gocov-filtered-pathname', current.gocovFilteredPathname);
   core.setOutput('report-pathname', current.reportPathname);
   core.endGroup();
 

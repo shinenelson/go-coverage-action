@@ -137,11 +137,11 @@ async function generateCoverage() {
     'coverage_pct': 0,
     'reportPathname': '',
     'gocovPathname': '',
-    'gocovFilteredPathname': '',
+    'gocovAggPathname': '',
   };
 
   report.gocovPathname = path.join(tmpdir, 'go.cov');
-  report.gocovFilteredPathname = path.join(tmpdir, 'go-filtered.cov');
+  report.gocovAggPathname = path.join(tmpdir, 'go-aggregate.cov');
 
   const filename = core.getInput('report-filename');
   report.reportPathname = filename.startsWith('/') ? filename : path.join(tmpdir, filename);
@@ -170,7 +170,7 @@ async function generateCoverage() {
   await exec('go', args);
 
   const pkgStats = {};
-  const [globalPct, skippedFileCount, pkgStmts] = await calcCoverage(report.gocovPathname, report.gocovFilteredPathname);
+  const [globalPct, skippedFileCount, pkgStmts] = await calcCoverage(report.gocovPathname, report.gocovAggPathname);
   for (const [pkgPath, [stmtCount, matchCount]] of Object.entries(pkgStmts)) {
     report.pkg_count++;
     pkgStats[pkgPath] = [matchCount / stmtCount * 100];
@@ -192,18 +192,17 @@ async function generateCoverage() {
 
 // parse the go.cov file to calculate "true" coverage figures per package
 // regardless of whether coverpkg is used.
-async function calcCoverage(goCovFilename, filteredFilename) {
+async function calcCoverage(goCovFilename, aggFilename) {
   const pkgStats = {};
-  const seenIds = {};
-  let globalStmts = 0;
-  let globalCount = 0;
+  const idCounts = {};
+  let globalStmts = 0; // number of statements globally
+  let globalCount = 0; // number of statements with coverage
   let skippedFiles = new Set();
 
   const ignorePatterns = core.getMultilineInput('ignore-pattern').map(pat => new RegExp(pat.trim()));
   core.info(`Ignoring ${ignorePatterns.length} filename patterns`);
 
-  const wl = fs.createWriteStream(filteredFilename);
-  wl.write('mode: set\n');
+  const wl = fs.createWriteStream(aggFilename);
 
   const rl = readline.createInterface({
     input: fs.createReadStream(goCovFilename),
@@ -213,9 +212,17 @@ async function calcCoverage(goCovFilename, filteredFilename) {
   // TODO: write an entry to wl for each id; write if set, write zeroes if not set at end
 
   const re = /^(.+) (\d+) (\d+)$/;
+  let mode = 'set';
   rl.on('line', (line) => {
     const m = line.match(re);
-    if (!m) return;
+    if (!m) {
+      const mm = line.match(/mode:\s+(\w+)/);
+      if (mm) {
+        mode = mm[1];
+        core.info(`Mode: ${mode}`);
+      }
+      return;
+    }
     const id = m[1]; // statement identifier; pkgpath + stmt offset
     const pkgPath = path.dirname(id);
     const fn = id.split(':')[0];
@@ -233,24 +240,25 @@ async function calcCoverage(goCovFilename, filteredFilename) {
     if (!pkgStats[pkgPath]) {
       pkgStats[pkgPath] = [0, 0]; // stmts, covered
     }
-    if (!seenIds[id]) {
+    if (!idCounts[id]) {
       globalStmts += stmtCount;
-      seenIds[id] = [stmtCount, false];
+      idCounts[id] = [stmtCount, 0];
       pkgStats[pkgPath][0] += stmtCount;
     }
-    if (matchCount > 0 && !seenIds[id][1]) {
+    if (matchCount > 0 && !idCounts[id][1]) {
       globalCount += stmtCount;
-      seenIds[id][1] = true;
       pkgStats[pkgPath][1] += stmtCount;
     }
+    idCounts[id][1] += matchCount;
   });
   await events.once(rl, 'close');
 
-  core.info(`Writing ${Object.keys(seenIds).length} keys`);
-  for (const id of Object.keys(seenIds).sort()) {
-    const [stmtCount, isCovered] = seenIds[id];
-    core.info(`Write: ${id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
-    wl.write(`${id} ${stmtCount} ${isCovered ? 1 : 0}\n`);
+  core.info(`Writing ${Object.keys(idCounts).length} keys`);
+  wl.write('mode: ${mode}\n');
+  for (const id of Object.keys(idCounts).sort()) {
+    const [stmtCount, coverCount] = idCounts[id];
+    core.info(`Write: ${id} ${stmtCount} ${mode == 'set' && coverCount ? 1 : coverCount}`);
+    wl.write(`${id} ${stmtCount} ${mode == 'set' && coverCount ? 1 : coverCount}\n`);
   }
   wl.end()
 
@@ -386,7 +394,7 @@ async function generateReport() {
   core.setOutput('coverage-last-sha', stats.prior.sha);
   core.setOutput('meets-threshold', stats.meetsThreshold);
   core.setOutput('gocov-pathname', current.gocovPathname);
-  core.setOutput('gocov-filtered-pathname', current.gocovFilteredPathname);
+  core.setOutput('gocov-agg-pathname', current.gocovAggPathname);
   core.setOutput('report-pathname', current.reportPathname);
   core.endGroup();
 

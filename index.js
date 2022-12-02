@@ -254,10 +254,9 @@ async function calcCoverage(goCovFilename, aggFilename) {
   await events.once(rl, 'close');
 
   core.info(`Writing ${Object.keys(idCounts).length} keys`);
-  wl.write('mode: ${mode}\n');
+  wl.write(`mode: ${mode}\n`);
   for (const id of Object.keys(idCounts).sort()) {
     const [stmtCount, coverCount] = idCounts[id];
-    core.info(`Write: ${id} ${stmtCount} ${mode == 'set' && coverCount ? 1 : coverCount}`);
     wl.write(`${id} ${stmtCount} ${mode == 'set' && coverCount ? 1 : coverCount}\n`);
   }
   wl.end()

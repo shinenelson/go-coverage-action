@@ -15600,6 +15600,7 @@ async function calcCoverage(goCovFilename, filteredFilename) {
       pkgStats[pkgPath][1] += stmtCount;
     }
   });
+  await events.once(rl, 'close');
 
   core.info(`Writing ${Object.keys(seenIds).length} keys`);
   for (const id of Object.keys(seenIds).sort()) {
@@ -15609,7 +15610,6 @@ async function calcCoverage(goCovFilename, filteredFilename) {
   }
   wl.end()
 
-  await events.once(rl, 'close');
   const globalPct = globalCount / globalStmts * 100;
   core.info(`Totals stmts=${globalStmts} covered=${globalCount}, pct=${globalPct}`);
   return [globalPct, skippedFiles.size, pkgStats];
